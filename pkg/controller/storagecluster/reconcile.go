@@ -1025,7 +1025,7 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 				Resources:            resources,
 				Placement:            placement,
 				Config:               ds.Config.ToMap(),
-				VolumeClaimTemplates: []corev1.PersistentVolumeClaim{ds.DataPVCTemplate},
+				VolumeClaimTemplates: []corev1.PersistentVolumeClaim{ds.DataPVCTemplate, ds.MetadataPVCTemplate},
 				Portable:             ds.Portable,
 				TuneSlowDeviceClass:  ds.Config.TuneSlowDeviceClass,
 			}
