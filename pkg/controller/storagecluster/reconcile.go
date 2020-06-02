@@ -64,6 +64,8 @@ osd_memory_target_cgroup_limit_ratio = 0.5
 	CleanupPolicyLabel = "cleanup.ocs.openshift.io"
 	// CleanupPolicyDelete when set, modifies the cleanup policy for Rook to delete the DataDirHostPath on uninstall
 	CleanupPolicyDelete CleanupPolicyType = "yes-really-destroy-data"
+	//Name of MetadataPVCTemplate
+	metadataPVCName = "metadata"
 )
 
 var storageClusterFinalizer = "storagecluster.ocs.openshift.io"
@@ -850,6 +852,18 @@ func determineFailureDomain(sc *ocsv1.StorageCluster) string {
 	return failureDomain
 }
 
+// validateMetadataPvc checks the MetadataPvc of the given
+// StorageCluster for completeness and correctness
+func validateMetadataPvc(sc *ocsv1.StorageCluster) error {
+	for _, ds := range sc.Spec.StorageDeviceSets {
+		if ds.MetadataPVCTemplate.Spec.StorageClassName == nil || *ds.MetadataPVCTemplate.Spec.StorageClassName == "" {
+			return fmt.Errorf("failed to validate MetadataPvc : no StorageClass specified")
+		}
+	}
+
+	return nil
+}
+
 // newCephCluster returns a CephCluster object.
 func newCephCluster(sc *ocsv1.StorageCluster, cephImage string, nodeCount int, reqLogger logr.Logger) *cephv1.CephCluster {
 	labels := map[string]string{
@@ -1049,6 +1063,12 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 				VolumeClaimTemplates: []corev1.PersistentVolumeClaim{ds.DataPVCTemplate},
 				Portable:             ds.Portable,
 				TuneSlowDeviceClass:  ds.Config.TuneSlowDeviceClass,
+			}
+
+			err := validateMetadataPvc(sc)
+			if err == nil {
+				ds.MetadataPVCTemplate.ObjectMeta.Name = metadataPVCName
+				set.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{ds.DataPVCTemplate, ds.MetadataPVCTemplate}
 			}
 			storageClassDeviceSets = append(storageClassDeviceSets, set)
 		}
