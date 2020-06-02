@@ -58,6 +58,8 @@ osd_memory_target_cgroup_limit_ratio = 0.5
 	CleanupPolicyLabel = "cleanup.ocs.openshift.io"
 	// CleanupPolicyDelete when set, modifies the cleanup policy for Rook to delete the DataDirHostPath on uninstall
 	CleanupPolicyDelete CleanupPolicyType = "yes-really-destroy-data"
+	//Name of MetadataPVCTemplate
+	metadataPVCName = "metadata"
 )
 
 var storageClusterFinalizer = "storagecluster.ocs.openshift.io"

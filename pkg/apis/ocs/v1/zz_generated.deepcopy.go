@@ -406,6 +406,7 @@ func (in *StorageDeviceSet) DeepCopyInto(out *StorageDeviceSet) {
 	in.Placement.DeepCopyInto(&out.Placement)
 	out.Config = in.Config
 	in.DataPVCTemplate.DeepCopyInto(&out.DataPVCTemplate)
+	in.MetadataPVCTemplate.DeepCopyInto(&out.MetadataPVCTemplate)
 	return
 }
 
