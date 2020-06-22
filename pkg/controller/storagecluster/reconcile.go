@@ -427,6 +427,9 @@ func (r *ReconcileStorageCluster) validateStorageDeviceSets(sc *ocsv1.StorageClu
 		if ds.DataPVCTemplate.Spec.StorageClassName == nil || *ds.DataPVCTemplate.Spec.StorageClassName == "" {
 			return fmt.Errorf("failed to validate StorageDeviceSet %d: no StorageClass specified", i)
 		}
+		if ds.MetadataPVCTemplate.Spec.StorageClassName == nil || *ds.MetadataPVCTemplate.Spec.StorageClassName == "" {
+			return fmt.Errorf("failed to validate MetadataPvc : no StorageClass specified")
+		}
 	}
 
 	return nil
@@ -854,15 +857,15 @@ func determineFailureDomain(sc *ocsv1.StorageCluster) string {
 
 // validateMetadataPvc checks the MetadataPvc of the given
 // StorageCluster for completeness and correctness
-func validateMetadataPvc(sc *ocsv1.StorageCluster) error {
-	for _, ds := range sc.Spec.StorageDeviceSets {
-		if ds.MetadataPVCTemplate.Spec.StorageClassName == nil || *ds.MetadataPVCTemplate.Spec.StorageClassName == "" {
-			return fmt.Errorf("failed to validate MetadataPvc : no StorageClass specified")
-		}
-	}
+// func validateMetadataPvc(sc *ocsv1.StorageCluster) error {
+// 	for _, ds := range sc.Spec.StorageDeviceSets {
+// 		if ds.MetadataPVCTemplate.Spec.StorageClassName == nil || *ds.MetadataPVCTemplate.Spec.StorageClassName == "" {
+// 			return fmt.Errorf("failed to validate MetadataPvc : no StorageClass specified")
+// 		}
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 // newCephCluster returns a CephCluster object.
 func newCephCluster(sc *ocsv1.StorageCluster, cephImage string, nodeCount int, reqLogger logr.Logger) *cephv1.CephCluster {
@@ -1064,8 +1067,8 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 				Portable:             ds.Portable,
 				TuneSlowDeviceClass:  ds.Config.TuneSlowDeviceClass,
 			}
-
-			err := validateMetadataPvc(sc)
+			r := new(ReconcileStorageCluster)
+			err := r.validateStorageDeviceSets(sc)
 			if err == nil {
 				ds.MetadataPVCTemplate.ObjectMeta.Name = metadataPVCName
 				set.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{ds.DataPVCTemplate, ds.MetadataPVCTemplate}
