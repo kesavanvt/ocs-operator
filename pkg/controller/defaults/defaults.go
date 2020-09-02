@@ -11,6 +11,12 @@ const (
 	// RackTopologyKey is the node label used to distribute storage nodes
 	// when there are not enough AZs presnet across the nodes
 	RackTopologyKey = "topology.rook.io/rack"
+	// KubeMajorTSC is the minimum major kube version to support TSC
+	// used along with KubeMinorTSC for version comparison 
+	KubeMajorTSC = "1"
+	// KubeMinorTSC is the minimum minor kube version to support TSC
+	// used along with KubeMajorTSC for version comparison 
+	KubeMinorTSC = "19"
 )
 
 var (
