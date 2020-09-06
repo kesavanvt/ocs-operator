@@ -337,6 +337,7 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 		topologyKey := ds.TopologyKey
 		topologyKeyValues := []string{}
 		noPlacement := ds.Placement.NodeAffinity == nil && ds.Placement.PodAffinity == nil && ds.Placement.PodAntiAffinity == nil
+		noPreparePlacement := ds.PreparePlacement.NodeAffinity == nil && ds.PreparePlacement.PodAffinity == nil && ds.PreparePlacement.PodAntiAffinity == nil
 
 		if noPlacement {
 			if topologyKey == "" {
@@ -366,14 +367,14 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 
 		for i := 0; i < replica; i++ {
 			placement := rook.Placement{}
+			prepareplacement := rook.Placement{}
 
 			if noPlacement {
 				in := getPlacement(sc, "osd")
 				(&in).DeepCopyInto(&placement)
 
 				if len(topologyKeyValues) >= replica {
-					podAffinityTerms := placement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution
-					podAffinityTerms[0].PodAffinityTerm.TopologyKey = topologyKey
+					placement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.TopologyKey = topologyKey
 
 					topologyIndex := i % len(topologyKeyValues)
 					nodeZoneSelector := corev1.NodeSelectorRequirement{
@@ -383,7 +384,30 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 					}
 					appendNodeRequirements(&placement, nodeZoneSelector)
 				}
+
+				if !noPreparePlacement {
+					prepareplacement = ds.PreparePlacement
+				} else {
+					in := getPlacement(sc, "osd-prepare")
+					(&in).DeepCopyInto(&prepareplacement)
+
+					if len(topologyKeyValues) >= replica {
+						prepareplacement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.TopologyKey = topologyKey
+
+						topologyIndex := i % len(topologyKeyValues)
+						nodeZoneSelector := corev1.NodeSelectorRequirement{
+							Key:      topologyKey,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{topologyKeyValues[topologyIndex]},
+						}
+						appendNodeRequirements(&prepareplacement, nodeZoneSelector)
+					}
+				}
+			} else if !noPlacement && noPreparePlacement {
+				prepareplacement = ds.Placement
+				placement = ds.Placement
 			} else {
+				prepareplacement = ds.PreparePlacement
 				placement = ds.Placement
 			}
 
@@ -392,6 +416,7 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 				Count:                count,
 				Resources:            resources,
 				Placement:            placement,
+				PreparePlacement:     &prepareplacement,
 				Config:               ds.Config.ToMap(),
 				VolumeClaimTemplates: []corev1.PersistentVolumeClaim{ds.DataPVCTemplate},
 				Portable:             ds.Portable,
