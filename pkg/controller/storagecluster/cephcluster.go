@@ -19,7 +19,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/version"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/reference"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -166,6 +169,12 @@ func newCephCluster(sc *ocsv1.StorageCluster, cephImage string, nodeCount int, r
 		"app": sc.Name,
 	}
 
+	// determining the kube server version
+	serverVersion, err := determineKubeVersion()
+	if err != nil {
+		reqLogger.Error(err, "failed to determine the kube server version.")
+	}
+
 	cephCluster := &cephv1.CephCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      generateNameForCephCluster(sc),
@@ -201,7 +210,7 @@ func newCephCluster(sc *ocsv1.StorageCluster, cephImage string, nodeCount int, r
 				RulesNamespace: "openshift-storage",
 			},
 			Storage: rook.StorageScopeSpec{
-				StorageClassDeviceSets: newStorageClassDeviceSets(sc),
+				StorageClassDeviceSets: newStorageClassDeviceSets(sc, serverVersion),
 			},
 			Placement: rook.PlacementSpec{
 				"all": getPlacement(sc, "all"),
@@ -321,14 +330,35 @@ func getMonCount(nodeCount int) int {
 	return count
 }
 
+// determineKubeVersion gets the kube server version
+func determineKubeVersion() (*version.Info, error) {
+	clientset, err := kubernetes.NewForConfig(config.GetConfigOrDie())
+	if err != nil {
+		return nil, err
+	}
+
+	serverVersion, err := clientset.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	return serverVersion, nil
+}
+
 // newStorageClassDeviceSets converts a list of StorageDeviceSets into a list of Rook StorageClassDeviceSets
-func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDeviceSet {
+func newStorageClassDeviceSets(sc *ocsv1.StorageCluster, serverVersion *version.Info) []rook.StorageClassDeviceSet {
 	storageDeviceSets := sc.Spec.StorageDeviceSets
 	topologyMap := sc.Status.NodeTopologies
 
 	var storageClassDeviceSets []rook.StorageClassDeviceSet
 
+	// For kube server version 1.19 and above, topology spread constraints are used for OSD placements.
+	// For kube server version below 1.19, NodeAffinity and PodAntiAffinity are used for OSD placements.
+	supportTSC := serverVersion.Major >= defaults.KubeMajorTSC && serverVersion.Minor >= defaults.KubeMinorTSC
+
 	for _, ds := range storageDeviceSets {
+		var noPlacement bool
+		var noPreparePlacement bool
 		resources := ds.Resources
 		if resources.Requests == nil && resources.Limits == nil {
 			resources = defaults.DaemonResources["osd"]
@@ -336,10 +366,16 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 
 		topologyKey := ds.TopologyKey
 		topologyKeyValues := []string{}
-		noPlacement := ds.Placement.NodeAffinity == nil && ds.Placement.PodAffinity == nil && ds.Placement.PodAntiAffinity == nil
-		noPreparePlacement := ds.PreparePlacement.NodeAffinity == nil && ds.PreparePlacement.PodAffinity == nil && ds.PreparePlacement.PodAntiAffinity == nil
 
-		if noPlacement {
+		if supportTSC {
+			noPlacement = ds.Placement.NodeAffinity == nil && ds.Placement.PodAffinity == nil && ds.Placement.PodAntiAffinity == nil && ds.Placement.TopologySpreadConstraints == nil
+			noPreparePlacement = ds.PreparePlacement.NodeAffinity == nil && ds.PreparePlacement.PodAffinity == nil && ds.PreparePlacement.PodAntiAffinity == nil && ds.PreparePlacement.TopologySpreadConstraints == nil
+		} else {
+			noPlacement = ds.Placement.NodeAffinity == nil && ds.Placement.PodAffinity == nil && ds.Placement.PodAntiAffinity == nil
+			noPreparePlacement = ds.PreparePlacement.NodeAffinity == nil && ds.PreparePlacement.PodAffinity == nil && ds.PreparePlacement.PodAntiAffinity == nil
+		}
+
+		if (noPlacement && noPreparePlacement) || (!supportTSC && noPlacement) {
 			if topologyKey == "" {
 				topologyKey = determineFailureDomain(sc)
 			}
@@ -370,29 +406,15 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 			prepareplacement := rook.Placement{}
 
 			if noPlacement {
-				in := getPlacement(sc, "osd")
-				(&in).DeepCopyInto(&placement)
-
-				if len(topologyKeyValues) >= replica {
-					placement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.TopologyKey = topologyKey
-
-					topologyIndex := i % len(topologyKeyValues)
-					nodeZoneSelector := corev1.NodeSelectorRequirement{
-						Key:      topologyKey,
-						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{topologyKeyValues[topologyIndex]},
-					}
-					appendNodeRequirements(&placement, nodeZoneSelector)
-				}
-
-				if !noPreparePlacement {
-					prepareplacement = ds.PreparePlacement
+				if supportTSC {
+					in := getPlacement(sc, "osd-tsc")
+					(&in).DeepCopyInto(&placement)
 				} else {
-					in := getPlacement(sc, "osd-prepare")
-					(&in).DeepCopyInto(&prepareplacement)
+					in := getPlacement(sc, "osd")
+					(&in).DeepCopyInto(&placement)
 
 					if len(topologyKeyValues) >= replica {
-						prepareplacement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.TopologyKey = topologyKey
+						placement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.TopologyKey = topologyKey
 
 						topologyIndex := i % len(topologyKeyValues)
 						nodeZoneSelector := corev1.NodeSelectorRequirement{
@@ -400,7 +422,35 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster) []rook.StorageClassDevi
 							Operator: corev1.NodeSelectorOpIn,
 							Values:   []string{topologyKeyValues[topologyIndex]},
 						}
-						appendNodeRequirements(&prepareplacement, nodeZoneSelector)
+						appendNodeRequirements(&placement, nodeZoneSelector)
+					}
+				}
+
+				if !noPreparePlacement {
+					prepareplacement = ds.PreparePlacement
+				} else {
+					if supportTSC {
+						in := getPlacement(sc, "osd-prepare-tsc")
+						(&in).DeepCopyInto(&prepareplacement)
+					} else {
+						in := getPlacement(sc, "osd-prepare")
+						(&in).DeepCopyInto(&prepareplacement)
+					}
+
+					if len(topologyKeyValues) >= replica {
+						if supportTSC {
+							prepareplacement.TopologySpreadConstraints[0].TopologyKey = topologyKey
+						} else {
+							prepareplacement.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.TopologyKey = topologyKey
+
+							topologyIndex := i % len(topologyKeyValues)
+							nodeZoneSelector := corev1.NodeSelectorRequirement{
+								Key:      topologyKey,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{topologyKeyValues[topologyIndex]},
+							}
+							appendNodeRequirements(&prepareplacement, nodeZoneSelector)
+						}
 					}
 				}
 			} else if !noPlacement && noPreparePlacement {
