@@ -531,11 +531,18 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster, serverVersion *version.
 					if noPreparePlacement {
 						in := getPlacement(sc, "osd-prepare-tsc")
 						(&in).DeepCopyInto(&preparePlacement)
+					}
 
-						if len(topologyKeyValues) >= replica {
-							// If topologyKey is not host, append additional topology spread constarint to the
-							// default preparePlacement. This serves even distribution at the host level
-							// within a failure domain (zone/rack).
+					if len(topologyKeyValues) >= replica {
+						if portable && !strings.Contains(topologyKey, "zone") {
+							placement.TopologySpreadConstraints = append(placement.TopologySpreadConstraints, placement.TopologySpreadConstraints[0])
+							placement.TopologySpreadConstraints[0].TopologyKey = topologyKey
+							placement.TopologySpreadConstraints[0].WhenUnsatisfiable = "DoNotSchedule"
+						}
+						// If topologyKey is not host, append additional topology spread constarint to the
+						// default preparePlacement. This serves even distribution at the host level
+						// within a failure domain (zone/rack).
+						if noPreparePlacement {
 							if topologyKey != corev1.LabelHostname {
 								preparePlacement.TopologySpreadConstraints = append(preparePlacement.TopologySpreadConstraints, preparePlacement.TopologySpreadConstraints[0])
 							}
