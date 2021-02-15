@@ -537,9 +537,10 @@ func newStorageClassDeviceSets(sc *ocsv1.StorageCluster, serverVersion *version.
 							// default preparePlacement. This serves even distribution at the host level
 							// within a failure domain (zone/rack).
 							if topologyKey != corev1.LabelHostname {
-								preparePlacement.TopologySpreadConstraints = append(preparePlacement.TopologySpreadConstraints, preparePlacement.TopologySpreadConstraints[0])
+								addStrictFailureDomainTSC(&preparePlacement, topologyKey)
+							} else {
+								preparePlacement.TopologySpreadConstraints[0].TopologyKey = topologyKey
 							}
-							preparePlacement.TopologySpreadConstraints[0].TopologyKey = topologyKey
 						}
 					}
 				} else {
@@ -711,4 +712,14 @@ func generateMonSpec(sc *ocsv1.StorageCluster, nodeCount int) cephv1.MonSpec {
 		Count:                getMonCount(nodeCount, false),
 		AllowMultiplePerNode: false,
 	}
+}
+
+// addStrictFailureDomainTSC adds hard topology constraints at failure domain level
+// and uses soft topology constraints within falure domain (across host).
+func addStrictFailureDomainTSC(placement *rook.Placement, topologyKey string) {
+	newTSC := placement.TopologySpreadConstraints[0]
+	newTSC.TopologyKey = topologyKey
+	newTSC.WhenUnsatisfiable = "DoNotSchedule"
+
+	placement.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{newTSC, placement.TopologySpreadConstraints[0]}
 }
