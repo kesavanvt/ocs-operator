@@ -130,3 +130,13 @@ func setTopologyForAffinity(placement *rookv1.Placement, selectorValue string, t
 	}
 	appendNodeRequirements(placement, nodeZoneSelector)
 }
+
+// setMultipleTSC assigns hard topology constraints at failure domain level
+// and soft topology constraints within falure domain (across host).
+func setMultipleTSC(placement *rookv1.Placement, topologyKey string) {
+	newTSC := placement.TopologySpreadConstraints[0]
+	newTSC.TopologyKey = topologyKey
+	newTSC.WhenUnsatisfiable = "DoNotSchedule"
+
+	placement.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{newTSC, placement.TopologySpreadConstraints[0]}
+}
